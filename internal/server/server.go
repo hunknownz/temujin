@@ -55,6 +55,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/live-status", s.handleLiveStatus)
 	s.mux.HandleFunc("GET /api/pipeline", s.handlePipeline)
 	s.mux.HandleFunc("POST /api/create-raid", s.handleCreateRaid)
+	s.mux.HandleFunc("POST /api/launch-raid", s.handleLaunchRaid)
 	s.mux.HandleFunc("POST /api/raid-state", s.handleRaidState)
 	s.mux.HandleFunc("POST /api/raid-flow", s.handleRaidFlow)
 	s.mux.HandleFunc("POST /api/raid-done", s.handleRaidDone)
@@ -122,6 +123,44 @@ func (s *Server) handleCreateRaid(w http.ResponseWriter, r *http.Request) {
 		return append([]raid.Task{task}, tasks...)
 	})
 	s.broadcast("task.created", task)
+
+	sendJSON(w, 200, map[string]any{"ok": true, "taskId": taskID})
+}
+
+func (s *Server) handleLaunchRaid(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Title string `json:"title"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		sendJSON(w, 400, map[string]any{"ok": false, "error": "invalid request"})
+		return
+	}
+	title := sanitizeText(req.Title, 200)
+	if len(title) < 6 {
+		sendJSON(w, 400, map[string]any{"ok": false, "error": "title too short (min 6 chars)"})
+		return
+	}
+
+	taskID := raid.NewTaskID()
+	now := raid.NowISO()
+
+	task := raid.Task{
+		ID:    taskID,
+		Title: title,
+		State: raid.StateIntel,
+		Org:   raid.StateOrgMap[raid.StateIntel],
+		Now:   "Tanma dispatched — scouting in progress",
+		FlowLog: []raid.FlowEntry{
+			{At: now, From: "Khan", To: "Inbox", Remark: "New raid: " + title},
+			{At: now, From: "Khan", To: "Intel", Remark: "Khan orders: send Tanma to scout"},
+		},
+		UpdatedAt: now,
+	}
+
+	s.store.Update(func(tasks []raid.Task) []raid.Task {
+		return append([]raid.Task{task}, tasks...)
+	})
+	s.broadcast("raid.launched", task)
 
 	sendJSON(w, 200, map[string]any{"ok": true, "taskId": taskID})
 }

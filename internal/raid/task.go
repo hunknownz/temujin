@@ -42,10 +42,11 @@ var StateOrgMap = map[string]string{
 }
 
 // StateAgentMap maps state to the agent that handles it
+// StateAgentMap maps dispatchable states to agents.
+// March is not here — it auto-transitions to Charge in the dispatcher.
 var StateAgentMap = map[string]string{
 	StateIntel:    AgentTanma,
 	StateKurultai: AgentAdvisor,
-	StateMarch:    AgentVanguard,
 	StateCharge:   AgentVanguard,
 	StateYam:      AgentYam,
 }
@@ -108,21 +109,30 @@ type ProgressEntry struct {
 	Elapsed    int        `json:"elapsed,omitempty"`
 }
 
+// AgentOutput stores the full output from each agent in the OODA cycle.
+type AgentOutput struct {
+	Agent      string `json:"agent"`
+	Text       string `json:"text"`
+	At         string `json:"at"`
+	DurationMs int    `json:"durationMs"`
+}
+
 type Task struct {
-	ID          string          `json:"id"`
-	Title       string          `json:"title"`
-	State       string          `json:"state"`
-	Org         string          `json:"org"`
-	Now         string          `json:"now"`
-	Block       string          `json:"block"`
-	Output      string          `json:"output"`
-	FlowLog     []FlowEntry     `json:"flow_log"`
-	Todos       []TodoItem      `json:"todos,omitempty"`
-	ProgressLog []ProgressEntry `json:"progress_log,omitempty"`
-	Archived    bool            `json:"archived"`
-	ArchivedAt  string          `json:"archivedAt,omitempty"`
-	UpdatedAt   string          `json:"updatedAt"`
-	PrevState   string          `json:"_prev_state,omitempty"`
+	ID           string          `json:"id"`
+	Title        string          `json:"title"`
+	State        string          `json:"state"`
+	Org          string          `json:"org"`
+	Now          string          `json:"now"`
+	Block        string          `json:"block"`
+	Output       string          `json:"output"`
+	FlowLog      []FlowEntry     `json:"flow_log"`
+	AgentOutputs []AgentOutput   `json:"agent_outputs,omitempty"`
+	Todos        []TodoItem      `json:"todos,omitempty"`
+	ProgressLog  []ProgressEntry `json:"progress_log,omitempty"`
+	Archived     bool            `json:"archived"`
+	ArchivedAt   string          `json:"archivedAt,omitempty"`
+	UpdatedAt    string          `json:"updatedAt"`
+	PrevState    string          `json:"_prev_state,omitempty"`
 }
 
 func NowISO() string {

@@ -15,194 +15,238 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .hdr-r{display:flex;align-items:center;gap:8px}
 .chip{background:var(--panel2);padding:4px 10px;border-radius:12px;font-size:12px}
 .chip.ok{color:var(--ok)}.chip.err{color:var(--danger)}
-.btn{background:var(--acc);color:#000;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600}
+.btn{background:var(--acc);color:#000;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;transition:opacity .15s}
 .btn:hover{opacity:0.85}
+.btn:disabled{opacity:0.5;cursor:not-allowed}
 .btn-sm{padding:4px 10px;font-size:12px}
 .btn-ghost{background:transparent;color:var(--text);border:1px solid var(--line)}
+.btn-danger{background:var(--danger);color:#fff}
+.new-raid{margin:16px 0;display:flex;gap:8px}
+.new-raid input{flex:1;background:var(--panel);border:1px solid var(--line);color:var(--text);padding:10px 14px;border-radius:6px;font-size:14px}
+.new-raid input:focus{outline:none;border-color:var(--acc)}
 .board{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-top:16px}
-.col{background:var(--panel);border-radius:8px;padding:10px;min-height:200px}
+.col{background:var(--panel);border-radius:8px;padding:10px;min-height:180px}
 .col-hdr{font-size:13px;font-weight:600;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
 .col-hdr .cnt{background:var(--panel2);padding:2px 8px;border-radius:10px;font-size:11px;color:var(--muted)}
 .card{background:var(--panel2);border-radius:6px;padding:10px;margin-bottom:8px;cursor:pointer;border-left:3px solid var(--muted);transition:border-color .2s}
 .card:hover{border-color:var(--acc)}
-.card-title{font-size:13px;font-weight:500;margin-bottom:4px}
+.card-title{font-size:13px;font-weight:500;margin-bottom:4px;line-height:1.3}
 .card-meta{font-size:11px;color:var(--muted)}
-.card-now{font-size:11px;color:var(--acc);margin-top:4px}
-.new-raid{margin:16px 0;display:flex;gap:8px}
-.new-raid input{flex:1;background:var(--panel);border:1px solid var(--line);color:var(--text);padding:8px 12px;border-radius:6px;font-size:14px}
-.new-raid input:focus{outline:none;border-color:var(--acc)}
-.empty{color:var(--muted);font-size:12px;text-align:center;padding:20px 0}
-.modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:100}
-.modal{background:var(--panel);border-radius:12px;padding:20px;width:90%;max-width:600px;max-height:80vh;overflow-y:auto}
-.modal h2{font-size:16px;margin-bottom:12px;color:var(--acc)}
-.modal .close{float:right;background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer}
-.flow-item{display:flex;gap:8px;font-size:12px;padding:6px 0;border-bottom:1px solid var(--line)}
-.flow-time{color:var(--muted);min-width:60px}
-.flow-arrow{color:var(--acc)}
-.pipe{display:flex;gap:2px;margin:8px 0}
+.card-now{font-size:11px;color:var(--acc);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pipe{display:flex;gap:2px;margin:6px 0}
 .pipe-dot{width:20px;height:4px;border-radius:2px;background:var(--line)}
 .pipe-dot.done{background:var(--ok)}
 .pipe-dot.active{background:var(--acc);animation:pulse 1.5s infinite}
+.pipe-dot.fail{background:var(--danger)}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}
+.empty{color:var(--muted);font-size:12px;text-align:center;padding:20px 0}
+/* Modal */
+.modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.75);display:flex;align-items:start;justify-content:center;z-index:100;padding:40px 16px;overflow-y:auto}
+.modal{background:var(--panel);border-radius:12px;padding:24px;width:90%;max-width:720px;position:relative}
+.modal h2{font-size:16px;margin-bottom:4px;color:var(--acc);padding-right:30px}
+.modal .close{position:absolute;top:16px;right:16px;background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer}
+.modal .close:hover{color:var(--text)}
+.modal-section{margin-top:16px}
+.modal-section h3{font-size:12px;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);margin-bottom:8px;border-bottom:1px solid var(--line);padding-bottom:4px}
+.flow-item{display:flex;gap:8px;font-size:12px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.03);align-items:baseline}
+.flow-time{color:var(--muted);min-width:55px;font-size:11px}
+.flow-arrow{color:var(--acc);font-weight:700}
+.flow-remark{color:var(--muted);flex:1;word-break:break-word}
+/* Agent output tabs */
+.tabs{display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap}
+.tab{padding:4px 12px;border-radius:4px;font-size:12px;cursor:pointer;background:var(--panel2);color:var(--muted);border:1px solid transparent;transition:all .15s}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--acc);border-color:var(--acc);background:rgba(245,158,11,0.1)}
+.agent-output{background:var(--bg);border-radius:6px;padding:12px;font-size:13px;line-height:1.6;max-height:400px;overflow-y:auto;white-space:pre-wrap;word-break:break-word;font-family:'SF Mono',Menlo,monospace}
+.agent-output h1,.agent-output h2,.agent-output h3{font-size:inherit;color:var(--acc)}
+.actions{display:flex;gap:6px;margin-top:12px;flex-wrap:wrap}
 footer{text-align:center;color:var(--muted);font-size:11px;padding:20px 0;border-top:1px solid var(--line);margin-top:24px}
+.spinner{display:inline-block;width:12px;height:12px;border:2px solid var(--muted);border-top-color:var(--acc);border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:4px}
+@keyframes spin{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
 <div class="wrap" id="app">
   <div class="hdr">
-    <div>
-      <div class="logo">Temujin <span>Khan's War Room</span></div>
-    </div>
+    <div class="logo">Temujin <span>Khan's War Room</span></div>
     <div class="hdr-r">
       <span class="chip" id="sync-chip">Connecting...</span>
       <span class="chip" id="count-chip">0 raids</span>
-      <button class="btn btn-sm" onclick="refresh()">Refresh</button>
     </div>
   </div>
 
   <div class="new-raid">
-    <input id="new-title" placeholder="Describe your raid mission..." onkeydown="if(event.key==='Enter')createRaid()">
-    <button class="btn" onclick="createRaid()">Launch Raid</button>
+    <input id="new-title" placeholder="Describe your raid mission (e.g. 调研AI短视频带货的可行性)" onkeydown="if(event.key==='Enter')launchRaid()">
+    <button class="btn" id="launch-btn" onclick="launchRaid()">Launch Raid</button>
   </div>
 
   <div class="board" id="board"></div>
-
   <div id="modal"></div>
 
-  <footer>Temujin v0.1.0 &mdash; The steppe conquers the court.</footer>
+  <footer>Temujin v0.1.0 &mdash; The steppe conquers the court. &mdash; OODA: Observe &rarr; Orient &rarr; Decide &rarr; Act</footer>
 </div>
 
 <script>
-const API = '';
-const PIPE = [
-  {key:'Inbox',label:'Command',icon:'crown',color:'#ffd700'},
-  {key:'Intel',label:'Scout',icon:'eye',color:'#3b82f6'},
-  {key:'Kurultai',label:'Evaluate',icon:'shield',color:'#8b5cf6'},
-  {key:'March',label:'Prepare',icon:'horse',color:'#f59e0b'},
-  {key:'Charge',label:'Strike',icon:'swords',color:'#ef4444'},
-  {key:'Yam',label:'Report',icon:'scroll',color:'#10b981'},
-  {key:'Loot',label:'Collect',icon:'gem',color:'#f59e0b'},
-  {key:'Done',label:'Complete',icon:'check',color:'#10b981'},
+const API='';
+const PIPE=[
+  {key:'Inbox',label:'Inbox',icon:'crown',color:'#ffd700'},
+  {key:'Intel',label:'Intel',icon:'eye',color:'#3b82f6'},
+  {key:'Kurultai',label:'Kurultai',icon:'shield',color:'#8b5cf6'},
+  {key:'March',label:'March',icon:'horse',color:'#f59e0b'},
+  {key:'Charge',label:'Charge',icon:'swords',color:'#ef4444'},
+  {key:'Yam',label:'Yam',icon:'scroll',color:'#10b981'},
+  {key:'Loot',label:'Loot',icon:'gem',color:'#f59e0b'},
+  {key:'Done',label:'Done',icon:'check',color:'#10b981'},
 ];
-const STATE_IDX = {};
-PIPE.forEach((s,i) => STATE_IDX[s.key]=i);
-STATE_IDX['Blocked']=4; STATE_IDX['Migrate']=7;
+const SI={};PIPE.forEach((s,i)=>SI[s.key]=i);SI['Blocked']=4;SI['Migrate']=7;
+const AGENT_LABELS={tanma:'Tanma (Scout)',advisor:'Advisor (Counsel)',vanguard:'Vanguard (Striker)',yam:'Yam (Messenger)'};
 
-let tasks = [];
-let pollTimer = null;
+let tasks=[];
 
-async function fetchJ(url) {
-  const r = await fetch(API+url, {cache:'no-store'});
-  if (!r.ok) throw new Error(r.status);
-  return r.json();
-}
-async function postJ(url, data) {
-  const r = await fetch(API+url, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
-  return r.json();
-}
+async function fetchJ(u){const r=await fetch(API+u,{cache:'no-store'});if(!r.ok)throw new Error(r.status);return r.json()}
+async function postJ(u,d){const r=await fetch(API+u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});return r.json()}
 
-async function refresh() {
-  try {
-    const d = await fetchJ('/api/live-status');
-    tasks = d.tasks || [];
-    document.getElementById('sync-chip').className = 'chip ok';
-    document.getElementById('sync-chip').textContent = 'Connected';
-    const active = tasks.filter(t => !t.archived && t.state!=='Done' && t.state!=='Migrate');
-    document.getElementById('count-chip').textContent = active.length + ' active raids';
+async function refresh(){
+  try{
+    const d=await fetchJ('/api/live-status');
+    tasks=d.tasks||[];
+    document.getElementById('sync-chip').className='chip ok';
+    document.getElementById('sync-chip').textContent='Live';
+    const active=tasks.filter(t=>!t.archived&&t.state!=='Done'&&t.state!=='Migrate');
+    const running=tasks.filter(t=>!t.archived&&!['Done','Migrate','Inbox'].includes(t.state));
+    document.getElementById('count-chip').textContent=active.length+' active'+(running.length?' ('+running.length+' running)':'');
     renderBoard();
-  } catch(e) {
-    document.getElementById('sync-chip').className = 'chip err';
-    document.getElementById('sync-chip').textContent = 'Offline';
+    // Update open modal if any
+    const openId=document.querySelector('.modal-overlay')?.dataset?.taskId;
+    if(openId)showTask(openId);
+  }catch(e){
+    document.getElementById('sync-chip').className='chip err';
+    document.getElementById('sync-chip').textContent='Offline';
   }
 }
 
-function renderBoard() {
-  const board = document.getElementById('board');
-  const activeTasks = tasks.filter(t => !t.archived);
-  let html = '';
-  for (const stage of PIPE) {
-    const col = activeTasks.filter(t => t.state === stage.key || (stage.key==='Done' && t.state==='Migrate'));
-    html += `<div class="col">
-      <div class="col-hdr"><span style="color:${stage.color}">${stage.label}</span><span class="cnt">${col.length}</span></div>`;
-    if (col.length === 0) {
-      html += '<div class="empty">No raids</div>';
-    }
-    for (const t of col) {
-      const pipeHtml = PIPE.map((s,i) => {
-        const idx = STATE_IDX[t.state] ?? 4;
-        const cls = i < idx ? 'done' : i === idx ? 'active' : '';
-        return `<div class="pipe-dot ${cls}"></div>`;
+function renderBoard(){
+  const board=document.getElementById('board');
+  const at=tasks.filter(t=>!t.archived);
+  let html='';
+  for(const stage of PIPE){
+    const col=at.filter(t=>t.state===stage.key||(stage.key==='Done'&&t.state==='Migrate'));
+    html+=`<div class="col"><div class="col-hdr"><span style="color:${stage.color}">${stage.label}</span><span class="cnt">${col.length}</span></div>`;
+    if(!col.length)html+='<div class="empty">Empty</div>';
+    for(const t of col){
+      const idx=SI[t.state]??4;
+      const isMigrate=t.state==='Migrate';
+      const pipeHtml=PIPE.map((_,i)=>{
+        if(isMigrate)return`<div class="pipe-dot fail"></div>`;
+        const cls=i<idx?'done':i===idx?'active':'';
+        return`<div class="pipe-dot ${cls}"></div>`;
       }).join('');
-      html += `<div class="card" style="border-color:${stage.color}" onclick="showTask('${t.id}')">
-        <div class="card-title">${esc(t.title)}</div>
+      const isRunning=!['Done','Migrate','Inbox','Loot'].includes(t.state);
+      html+=`<div class="card" style="border-color:${isMigrate?'var(--migrate)':stage.color}" onclick="showTask('${t.id}')">
+        <div class="card-title">${isRunning?'<span class="spinner"></span>':''}${esc(t.title)}</div>
         <div class="pipe">${pipeHtml}</div>
-        <div class="card-now">${esc(t.now||'')}</div>
+        <div class="card-now">${esc((t.now||'').substring(0,60))}</div>
         <div class="card-meta">${t.id} &middot; ${timeAgo(t.updatedAt)}</div>
       </div>`;
     }
-    html += '</div>';
+    html+='</div>';
   }
-  board.innerHTML = html;
+  board.innerHTML=html;
 }
 
-function showTask(id) {
-  const t = tasks.find(x => x.id === id);
-  if (!t) return;
-  const flows = (t.flow_log||[]).map(f =>
-    `<div class="flow-item"><span class="flow-time">${timeAgo(f.at)}</span><span>${esc(f.from)}</span><span class="flow-arrow">&rarr;</span><span>${esc(f.to)}</span><span style="color:var(--muted)">${esc(f.remark)}</span></div>`
+function showTask(id){
+  const t=tasks.find(x=>x.id===id);
+  if(!t)return;
+
+  // Flow log
+  const flows=(t.flow_log||[]).map(f=>
+    `<div class="flow-item"><span class="flow-time">${fmtTime(f.at)}</span><b>${esc(f.from)}</b><span class="flow-arrow">&rarr;</span><b>${esc(f.to)}</b><span class="flow-remark">${esc(f.remark).substring(0,120)}</span></div>`
   ).join('');
-  document.getElementById('modal').innerHTML = `
-    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+
+  // Agent outputs
+  const outputs=t.agent_outputs||[];
+  let outputHtml='';
+  if(outputs.length){
+    const tabsHtml=outputs.map((o,i)=>
+      `<div class="tab${i===0?' active':''}" onclick="switchTab(this,${i})">${AGENT_LABELS[o.agent]||o.agent} <span style="color:var(--muted)">${(o.durationMs/1000).toFixed(1)}s</span></div>`
+    ).join('');
+    const panelsHtml=outputs.map((o,i)=>
+      `<div class="agent-output" data-tab="${i}" style="${i>0?'display:none':''}">${renderMd(o.text)}</div>`
+    ).join('');
+    outputHtml=`<div class="modal-section"><h3>Agent Reports (${outputs.length})</h3><div class="tabs">${tabsHtml}</div>${panelsHtml}</div>`;
+  }
+
+  // Actions
+  const isActive=!['Done','Migrate'].includes(t.state);
+  const actionsHtml=`<div class="actions">
+    ${isActive?`<button class="btn btn-sm btn-danger" onclick="doAction('${t.id}','cancel','Cancelled by Khan')">Retreat</button>`:''}
+    ${t.state==='Blocked'?`<button class="btn btn-sm" onclick="doAction('${t.id}','resume','')">Resume</button>`:''}
+    ${!isActive?`<button class="btn btn-sm btn-ghost" onclick="doAction('${t.id}','archive','')">Archive</button>`:''}
+  </div>`;
+
+  document.getElementById('modal').innerHTML=`
+    <div class="modal-overlay" data-task-id="${id}" onclick="if(event.target===this)closeModal()">
       <div class="modal">
         <button class="close" onclick="closeModal()">&times;</button>
         <h2>${esc(t.title)}</h2>
-        <p style="color:var(--muted);font-size:13px">${t.id} &middot; ${t.state} &middot; ${t.org}</p>
-        <p style="margin:8px 0;font-size:13px;color:var(--acc)">${esc(t.now||'')}</p>
-        ${t.block ? `<p style="color:var(--danger);font-size:13px">Blocked: ${esc(t.block)}</p>` : ''}
-        <div style="margin:12px 0">
-          ${t.state!=='Done'&&t.state!=='Migrate' ? `
-            <button class="btn btn-sm" onclick="doAction('${t.id}','stop','Paused by Khan')">Stop</button>
-            <button class="btn btn-sm btn-ghost" onclick="doAction('${t.id}','cancel','Cancelled by Khan')">Cancel</button>
-          ` : ''}
-          ${t.state==='Blocked' ? `<button class="btn btn-sm" onclick="doAction('${t.id}','resume','')">Resume</button>` : ''}
-          ${t.state==='Done'||t.state==='Migrate' ? `<button class="btn btn-sm btn-ghost" onclick="doAction('${t.id}','archive','')">Archive</button>` : ''}
-        </div>
-        <h3 style="font-size:13px;margin:12px 0 6px;color:var(--muted)">Flow Log</h3>
-        ${flows || '<div class="empty">No flow records</div>'}
+        <p style="color:var(--muted);font-size:13px;margin-bottom:4px">${t.id} &middot; <b style="color:${stateColor(t.state)}">${t.state}</b> &middot; ${t.org}</p>
+        <p style="font-size:13px;color:var(--acc)">${esc(t.now||'')}</p>
+        ${t.block?`<p style="color:var(--danger);font-size:13px;margin-top:4px">Blocked: ${esc(t.block)}</p>`:''}
+        ${actionsHtml}
+        ${outputHtml}
+        <div class="modal-section"><h3>Flow Log (${(t.flow_log||[]).length})</h3>${flows||'<div class="empty">No records</div>'}</div>
       </div>
     </div>`;
 }
 
-function closeModal() { document.getElementById('modal').innerHTML = ''; }
-
-async function createRaid() {
-  const input = document.getElementById('new-title');
-  const title = input.value.trim();
-  if (!title || title.length < 6) { alert('Title must be at least 6 characters'); return; }
-  await postJ('/api/create-raid', {title});
-  input.value = '';
-  refresh();
+function switchTab(el,idx){
+  const modal=el.closest('.modal');
+  modal.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active');
+  modal.querySelectorAll('.agent-output').forEach(p=>p.style.display='none');
+  modal.querySelector(`.agent-output[data-tab="${idx}"]`).style.display='';
 }
 
-async function doAction(id, action, reason) {
-  await postJ('/api/raid-action', {taskId:id, action, reason});
-  closeModal();
-  refresh();
+function closeModal(){document.getElementById('modal').innerHTML=''}
+
+async function launchRaid(){
+  const input=document.getElementById('new-title');
+  const title=input.value.trim();
+  if(!title||title.length<6){alert('Mission must be at least 6 characters');return}
+  const btn=document.getElementById('launch-btn');
+  btn.disabled=true;btn.textContent='Launching...';
+  try{
+    const r=await postJ('/api/launch-raid',{title});
+    if(r.ok){input.value='';refresh()}
+    else alert(r.error||'Failed');
+  }finally{btn.disabled=false;btn.textContent='Launch Raid'}
 }
 
-function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-function timeAgo(iso) {
-  if (!iso) return '';
-  const d = new Date(iso); const diff = Date.now() - d.getTime();
-  const m = Math.floor(diff/60000);
-  if (m<1) return 'just now'; if (m<60) return m+'m ago';
-  const h = Math.floor(m/60); if (h<24) return h+'h ago';
-  return Math.floor(h/24)+'d ago';
+async function doAction(id,action,reason){
+  await postJ('/api/raid-action',{taskId:id,action,reason});
+  closeModal();refresh();
 }
 
-// Poll every 5s
+function stateColor(s){
+  const m={Inbox:'#ffd700',Intel:'#3b82f6',Kurultai:'#8b5cf6',March:'#f59e0b',Charge:'#ef4444',Yam:'#10b981',Loot:'#f59e0b',Done:'#10b981',Migrate:'#8b5cf6',Blocked:'#ef4444'};
+  return m[s]||'var(--muted)';
+}
+
+function renderMd(s){
+  return esc(s).replace(/^(#{1,3}) (.+)$/gm,'<b style="color:var(--acc)">$2</b>')
+    .replace(/\*\*(.+?)\*\*/g,'<b>$1</b>')
+    .replace(/\n/g,'<br>');
+}
+
+function esc(s){return(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function fmtTime(iso){if(!iso)return'';const d=new Date(iso);return d.toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false})}
+function timeAgo(iso){
+  if(!iso)return'';const d=new Date(iso);const diff=Date.now()-d.getTime();const m=Math.floor(diff/60000);
+  if(m<1)return'just now';if(m<60)return m+'m ago';const h=Math.floor(m/60);if(h<24)return h+'h ago';return Math.floor(h/24)+'d ago';
+}
+
 refresh();
-pollTimer = setInterval(refresh, 5000);
+setInterval(refresh,3000);
 </script>
 </body>
 </html>

@@ -13,16 +13,17 @@ import (
 	"github.com/hunknownz/temujin/internal/store"
 )
 
-// Dispatcher polls tasks and auto-dispatches OpenClaw agents.
+const maxRetries = 3
+
+// Dispatcher polls tasks and auto-dispatches OpenClaw agents through the OODA loop.
 type Dispatcher struct {
 	store    *store.FileStore
 	running  bool
 	mu       sync.Mutex
-	// Track which tasks are currently being dispatched (prevent double dispatch)
 	inflight map[string]bool
+	retries  map[string]int // taskID+state -> retry count
 }
 
-// OpenClaw agent response
 type agentResult struct {
 	RunID   string `json:"runId"`
 	Status  string `json:"status"`
@@ -45,10 +46,10 @@ func New(s *store.FileStore) *Dispatcher {
 	return &Dispatcher{
 		store:    s,
 		inflight: make(map[string]bool),
+		retries:  make(map[string]int),
 	}
 }
 
-// Start begins the dispatch loop. Call in a goroutine.
 func (d *Dispatcher) Start() {
 	d.running = true
 	log.Println("[dispatcher] Started — watching for actionable raids")
@@ -84,12 +85,19 @@ func (d *Dispatcher) tick() {
 
 		agent, ok := raid.StateAgentMap[t.State]
 		if !ok {
-			// States like Inbox, Loot — need Khan (user) action, not agent dispatch
 			continue
 		}
 
-		// Auto-dispatch: this state has an agent assigned
+		// Check retry limit
+		retryKey := t.ID + ":" + t.State
 		d.mu.Lock()
+		if d.retries[retryKey] >= maxRetries {
+			d.mu.Unlock()
+			log.Printf("[dispatcher] %s: max retries (%d) reached for state %s — blocking", t.ID, maxRetries, t.State)
+			d.transitionTo(t.ID, raid.StateBlocked, fmt.Sprintf("Agent failed after %d retries", maxRetries))
+			d.addFlowEntry(t.ID, agent, "Blocked", fmt.Sprintf("Max retries reached in %s", t.State))
+			continue
+		}
 		d.inflight[t.ID] = true
 		d.mu.Unlock()
 
@@ -107,14 +115,17 @@ func (d *Dispatcher) dispatch(t raid.Task, agent string) {
 	msg := buildPrompt(t, agent)
 	log.Printf("[dispatcher] %s -> agent '%s' (state=%s)", t.ID, agent, t.State)
 
-	// Update progress: dispatching
 	d.updateProgress(t.ID, fmt.Sprintf("Dispatching to %s...", agent), t.State)
 
 	result, err := callOpenClaw(agent, msg)
 	if err != nil {
-		log.Printf("[dispatcher] ERROR %s -> %s: %v", t.ID, agent, err)
-		d.addFlowEntry(t.ID, agent, "Khan", fmt.Sprintf("Agent error: %v", err))
-		d.updateProgress(t.ID, fmt.Sprintf("Agent %s error: %v", agent, err), t.State)
+		retryKey := t.ID + ":" + t.State
+		d.mu.Lock()
+		d.retries[retryKey]++
+		attempt := d.retries[retryKey]
+		d.mu.Unlock()
+		log.Printf("[dispatcher] ERROR %s -> %s (attempt %d/%d): %v", t.ID, agent, attempt, maxRetries, err)
+		d.updateProgress(t.ID, fmt.Sprintf("Agent %s failed (attempt %d/%d)", agent, attempt, maxRetries), t.State)
 		return
 	}
 
@@ -123,124 +134,121 @@ func (d *Dispatcher) dispatch(t raid.Task, agent string) {
 		output = result.Result.Payloads[0].Text
 	}
 	if output == "" {
-		log.Printf("[dispatcher] WARN %s: agent '%s' returned empty output", t.ID, agent)
+		log.Printf("[dispatcher] WARN %s: agent '%s' returned empty", t.ID, agent)
 		return
 	}
 
-	log.Printf("[dispatcher] %s <- agent '%s' (%dms, %d chars)",
-		t.ID, agent, result.Result.Meta.DurationMs, len(output))
+	dur := result.Result.Meta.DurationMs
+	log.Printf("[dispatcher] %s <- agent '%s' (%dms, %d chars)", t.ID, agent, dur, len(output))
 
-	// Store agent output and transition to next state
+	// Clear retry counter on success
+	retryKey := t.ID + ":" + t.State
+	d.mu.Lock()
+	delete(d.retries, retryKey)
+	d.mu.Unlock()
+
+	// Accumulate this agent's output into the task's AgentOutputs
+	d.appendAgentOutput(t.ID, agent, output, dur)
+
 	d.handleAgentOutput(t, agent, output)
 }
 
 func (d *Dispatcher) handleAgentOutput(t raid.Task, agent string, output string) {
 	switch t.State {
 	case raid.StateIntel:
-		// Tanma finished scouting -> move to Kurultai for evaluation
-		d.addFlowEntry(t.ID, "Tanma", "Kurultai", truncate(output, 200))
-		d.storeOutput(t.ID, output)
-		d.transitionState(t.ID, raid.StateKurultai, "Advisor evaluating intel report")
+		// Tanma → Kurultai
+		d.addFlowEntry(t.ID, "Tanma", "Kurultai", "Intel report delivered")
+		d.transitionTo(t.ID, raid.StateKurultai, "Advisor evaluating intel")
 
 	case raid.StateKurultai:
-		// Advisor finished evaluation -> check GO/NO-GO
-		d.addFlowEntry(t.ID, "Advisor", "Khan", truncate(output, 200))
-		d.storeOutput(t.ID, output)
+		// Advisor → GO/NO-GO
+		d.addFlowEntry(t.ID, "Advisor", "Khan", verdictSummary(output))
 		if isRetreatSignal(output) {
-			d.transitionState(t.ID, raid.StateMigrate, "Advisor verdict: NO-GO — retreating")
-			d.addFlowEntry(t.ID, "Khan", "Migrate", "Retreat per Advisor's recommendation")
+			d.addFlowEntry(t.ID, "Khan", "Migrate", "Retreat per Advisor NO-GO")
+			d.transitionTo(t.ID, raid.StateMigrate, "Advisor verdict: NO-GO")
 		} else {
-			d.transitionState(t.ID, raid.StateMarch, "Preparing strike based on Advisor GO verdict")
-			// March -> Charge immediately (no separate agent for March)
-			d.addFlowEntry(t.ID, "Khan", "Vanguard", "Execute the raid plan")
-			d.transitionState(t.ID, raid.StateCharge, "Vanguard executing raid")
+			d.addFlowEntry(t.ID, "Khan", "Vanguard", "Khan approves — execute")
+			d.transitionTo(t.ID, raid.StateMarch, "Preparing strike")
+			d.transitionTo(t.ID, raid.StateCharge, "Vanguard executing")
 		}
 
 	case raid.StateCharge:
-		// Vanguard finished execution -> move to Yam for reporting
-		d.addFlowEntry(t.ID, "Vanguard", "Yam", truncate(output, 200))
-		d.storeOutput(t.ID, output)
+		// Vanguard → Yam (or retreat)
+		d.addFlowEntry(t.ID, "Vanguard", "Yam", "Execution report delivered")
 		if isRetreatSignal(output) {
-			d.transitionState(t.ID, raid.StateMigrate, "Vanguard retreat: "+truncate(output, 80))
-			d.addFlowEntry(t.ID, "Vanguard", "Migrate", "Execution failed, retreating")
+			d.addFlowEntry(t.ID, "Vanguard", "Migrate", "Execution blocked — retreating")
+			d.transitionTo(t.ID, raid.StateMigrate, "Vanguard retreat")
 		} else {
-			d.transitionState(t.ID, raid.StateYam, "Yam collecting battle data")
+			d.transitionTo(t.ID, raid.StateYam, "Yam compiling battle report")
 		}
 
 	case raid.StateYam:
-		// Yam finished reporting -> move to Loot
-		d.addFlowEntry(t.ID, "Yam", "Khan", truncate(output, 200))
-		d.storeOutput(t.ID, output)
-		d.transitionState(t.ID, raid.StateLoot, "Battle report ready — Khan reviewing results")
-		// Auto-complete to Done (for MVP, Khan auto-approves loot)
-		d.addFlowEntry(t.ID, "Khan", "Done", "Raid complete — loot collected")
-		d.completeDone(t.ID, output)
+		// Yam → Loot → Done
+		d.addFlowEntry(t.ID, "Yam", "Khan", "Battle report delivered")
+		d.transitionTo(t.ID, raid.StateLoot, "Khan reviewing battle report")
+		d.addFlowEntry(t.ID, "Khan", "Done", "Loot collected — raid complete")
+		d.transitionTo(t.ID, raid.StateDone, "Raid complete")
 	}
 }
 
-// buildPrompt creates the message to send to an agent based on the current raid context.
+// buildPrompt assembles the full context for an agent call.
+// Key design: each agent sees ALL previous agents' outputs, not just the last one.
 func buildPrompt(t raid.Task, agent string) string {
 	var sb strings.Builder
 
-	sb.WriteString(fmt.Sprintf("RAID ID: %s\n", t.ID))
-	sb.WriteString(fmt.Sprintf("RAID TITLE: %s\n", t.Title))
-	sb.WriteString(fmt.Sprintf("CURRENT STATE: %s\n", t.State))
+	sb.WriteString(fmt.Sprintf("# Raid: %s\n", t.Title))
+	sb.WriteString(fmt.Sprintf("**ID:** %s\n\n", t.ID))
 
-	// Include previous output as context
-	if t.Output != "" {
-		sb.WriteString(fmt.Sprintf("\n--- PREVIOUS INTEL ---\n%s\n--- END INTEL ---\n", t.Output))
+	// Include accumulated outputs from all previous agents (truncated to avoid token overflow)
+	if len(t.AgentOutputs) > 0 {
+		sb.WriteString("---\n\n")
+		for _, ao := range t.AgentOutputs {
+			label := strings.ToUpper(ao.Agent)
+			text := ao.Text
+			if len(text) > 3000 {
+				text = text[:3000] + "\n\n[... truncated for brevity ...]"
+			}
+			sb.WriteString(fmt.Sprintf("## %s Report\n\n%s\n\n---\n\n", label, text))
+		}
 	}
 
-	// Include recent flow log for context
-	if len(t.FlowLog) > 0 {
-		sb.WriteString("\n--- FLOW LOG (recent) ---\n")
-		start := len(t.FlowLog) - 5
-		if start < 0 {
-			start = 0
-		}
-		for _, f := range t.FlowLog[start:] {
-			sb.WriteString(fmt.Sprintf("[%s] %s -> %s: %s\n", f.At, f.From, f.To, f.Remark))
-		}
-		sb.WriteString("--- END FLOW LOG ---\n")
-	}
-
+	// Agent-specific mission
+	sb.WriteString("## Your Mission\n\n")
 	switch agent {
 	case raid.AgentTanma:
-		sb.WriteString(fmt.Sprintf("\nMISSION: Scout and investigate the opportunity described in '%s'. "+
-			"Search for market size, competitors, demand signals, risks. "+
-			"Reply with a structured intel report. Keep it under 500 words. "+
-			"Use Chinese if the raid title is in Chinese.\n", t.Title))
+		sb.WriteString("You are Tanma (scout). Investigate this business opportunity. " +
+			"Search for market data, competitors, demand signals, risks. " +
+			"Reply with your structured Tanma Intel Report format.\n")
 
 	case raid.AgentAdvisor:
-		sb.WriteString(fmt.Sprintf("\nMISSION: Evaluate the intel report above for raid '%s'. "+
-			"Challenge assumptions, assess feasibility. "+
-			"Give a clear verdict: GO / NO-GO / CONDITIONAL. "+
-			"Use the Evaluation Framework (Opportunity/Competition/Cost/Risk). "+
-			"End with your structured Verdict Format. "+
-			"Use Chinese if the intel report is in Chinese.\n", t.Title))
+		sb.WriteString("You are the Advisor. Read ALL the reports above carefully. " +
+			"Challenge assumptions, score each dimension (Opportunity/Competition/Cost/Risk, 1-5 each). " +
+			"If total < 10, verdict is NO-GO. " +
+			"Reply with your structured Advisor Evaluation format.\n")
 
 	case raid.AgentVanguard:
-		sb.WriteString(fmt.Sprintf("\nMISSION: Execute the approved raid plan for '%s'. "+
-			"Based on the intel and advisor verdict above, create a concrete action plan and execute it. "+
-			"For this MVP demo, describe the specific steps you would take, tools you would use, "+
-			"and estimated timeline. Provide a concrete execution report. "+
-			"If you see blockers, say RETREAT. "+
-			"Use Chinese if previous reports are in Chinese.\n", t.Title))
+		sb.WriteString("You are the Vanguard. The Advisor approved this raid. " +
+			"Based on ALL reports above, create a concrete, time-boxed execution plan. " +
+			"Include tools, budget, success metrics, and retreat triggers. " +
+			"Set Status: CHARGE if executable, or Status: RETREAT if blocked.\n")
 
 	case raid.AgentYam:
-		sb.WriteString(fmt.Sprintf("\nMISSION: Generate a battle report for raid '%s'. "+
-			"Summarize the full raid cycle: what was scouted, what was evaluated, what was executed. "+
-			"Use the Battle Report format. Assess: On Track / At Risk / Failed. "+
-			"Recommend next action. "+
-			"Use Chinese if previous reports are in Chinese.\n", t.Title))
+		sb.WriteString("You are the Yam (messenger). Read ALL reports above. " +
+			"Compile a concise battle report summarizing the full raid cycle. " +
+			"Include phase summary, key numbers, and one concrete next action. " +
+			"Keep it under 300 words.\n")
+	}
+
+	// Language hint
+	if containsChinese(t.Title) {
+		sb.WriteString("\nReply in Chinese (中文回复).\n")
 	}
 
 	return sb.String()
 }
 
-// callOpenClaw invokes `openclaw agent --agent <id> -m <msg> --json`
 func callOpenClaw(agent string, message string) (*agentResult, error) {
-	cmd := exec.Command("openclaw", "agent", "--agent", agent, "-m", message, "--json", "--timeout", "120")
+	cmd := exec.Command("openclaw", "agent", "--agent", agent, "-m", message, "--json", "--timeout", "300")
 	out, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -251,35 +259,54 @@ func callOpenClaw(agent string, message string) (*agentResult, error) {
 
 	var result agentResult
 	if err := json.Unmarshal(out, &result); err != nil {
-		return nil, fmt.Errorf("JSON parse error: %v (raw: %s)", err, truncate(string(out), 200))
+		return nil, fmt.Errorf("JSON parse: %v (raw: %s)", err, truncate(string(out), 200))
 	}
 
 	if result.Status != "ok" {
-		return nil, fmt.Errorf("agent returned status=%s summary=%s", result.Status, result.Summary)
+		return nil, fmt.Errorf("agent status=%s summary=%s", result.Status, result.Summary)
 	}
 
 	return &result, nil
 }
 
-// isRetreatSignal checks if the agent output explicitly signals a retreat/NO-GO verdict.
-// Must be strict to avoid false positives from agents merely mentioning retreat as a concept.
+// isRetreatSignal detects explicit NO-GO/RETREAT verdicts.
 func isRetreatSignal(output string) bool {
 	lower := strings.ToLower(output)
-	// Look for explicit verdict patterns, not mere mentions
-	verdictPatterns := []string{
+	patterns := []string{
 		"decision: no-go",
 		"verdict: no-go",
 		"决策: no-go",
 		"裁决: no-go",
-		"verdict: retreat",
 		"status: retreat",
+		"verdict: retreat",
 		"建议撤退",
 		"建议: 撤退",
 		"判定: 不可行",
 		"结论: 不可行",
 	}
-	for _, p := range verdictPatterns {
+	for _, p := range patterns {
 		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// verdictSummary extracts a short verdict line from advisor output.
+func verdictSummary(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "decision:") || strings.Contains(lower, "verdict:") ||
+			strings.Contains(lower, "决策:") || strings.Contains(lower, "裁决:") {
+			return strings.TrimSpace(line)
+		}
+	}
+	return "Evaluation complete"
+}
+
+func containsChinese(s string) bool {
+	for _, r := range s {
+		if r >= 0x4e00 && r <= 0x9fff {
 			return true
 		}
 	}
@@ -288,10 +315,15 @@ func isRetreatSignal(output string) bool {
 
 // --- Store helpers ---
 
-func (d *Dispatcher) transitionState(taskID, newState, comment string) {
+func (d *Dispatcher) transitionTo(taskID, newState, comment string) {
 	d.store.Update(func(tasks []raid.Task) []raid.Task {
 		for i := range tasks {
 			if tasks[i].ID == taskID {
+				// Validate transition
+				if !isValidTransition(tasks[i].State, newState) {
+					log.Printf("[dispatcher] INVALID transition %s: %s -> %s", taskID, tasks[i].State, newState)
+					return tasks
+				}
 				tasks[i].State = newState
 				if org, ok := raid.StateOrgMap[newState]; ok {
 					tasks[i].Org = org
@@ -304,6 +336,19 @@ func (d *Dispatcher) transitionState(taskID, newState, comment string) {
 		return tasks
 	})
 	log.Printf("[dispatcher] %s -> state=%s", taskID, newState)
+}
+
+func isValidTransition(from, to string) bool {
+	valid, ok := raid.ValidTransitions[from]
+	if !ok {
+		return false
+	}
+	for _, v := range valid {
+		if v == to {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *Dispatcher) addFlowEntry(taskID, from, to, remark string) {
@@ -321,11 +366,18 @@ func (d *Dispatcher) addFlowEntry(taskID, from, to, remark string) {
 	})
 }
 
-func (d *Dispatcher) storeOutput(taskID, output string) {
+func (d *Dispatcher) appendAgentOutput(taskID, agent, text string, durationMs int) {
 	d.store.Update(func(tasks []raid.Task) []raid.Task {
 		for i := range tasks {
 			if tasks[i].ID == taskID {
-				tasks[i].Output = output
+				tasks[i].AgentOutputs = append(tasks[i].AgentOutputs, raid.AgentOutput{
+					Agent:      agent,
+					Text:       text,
+					At:         raid.NowISO(),
+					DurationMs: durationMs,
+				})
+				// Also keep Output field updated with latest for backward compat
+				tasks[i].Output = text
 				tasks[i].UpdatedAt = raid.NowISO()
 				break
 			}
@@ -351,22 +403,6 @@ func (d *Dispatcher) updateProgress(taskID, text, state string) {
 		}
 		return tasks
 	})
-}
-
-func (d *Dispatcher) completeDone(taskID, output string) {
-	d.store.Update(func(tasks []raid.Task) []raid.Task {
-		for i := range tasks {
-			if tasks[i].ID == taskID {
-				tasks[i].State = raid.StateDone
-				tasks[i].Output = output
-				tasks[i].Now = "Raid complete"
-				tasks[i].UpdatedAt = raid.NowISO()
-				break
-			}
-		}
-		return tasks
-	})
-	log.Printf("[dispatcher] %s -> DONE", taskID)
 }
 
 func truncate(s string, n int) string {
