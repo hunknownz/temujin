@@ -20,12 +20,16 @@ const (
 	maxLoops      = 2 // Max OODA loopbacks before forcing Done
 )
 
+// BroadcastFunc is called when the dispatcher wants to notify clients.
+type BroadcastFunc func(event string, data any)
+
 // Dispatcher polls tasks and auto-dispatches OpenClaw agents through the OODA loop.
 type Dispatcher struct {
-	store  *store.FileStore
-	cancel context.CancelFunc
-	ctx    context.Context
-	wg     sync.WaitGroup
+	store     *store.FileStore
+	broadcast BroadcastFunc
+	cancel    context.CancelFunc
+	ctx       context.Context
+	wg        sync.WaitGroup
 
 	mu       sync.Mutex
 	inflight map[string]bool
@@ -53,16 +57,20 @@ type agentResult struct {
 	} `json:"result"`
 }
 
-func New(s *store.FileStore) *Dispatcher {
+func New(s *store.FileStore, bc BroadcastFunc) *Dispatcher {
+	if bc == nil {
+		bc = func(string, any) {}
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Dispatcher{
-		store:    s,
-		ctx:      ctx,
-		cancel:   cancel,
-		inflight: make(map[string]bool),
-		retries:  make(map[string]int),
-		loops:    make(map[string]int),
-		sem:      make(chan struct{}, maxConcurrent),
+		store:     s,
+		broadcast: bc,
+		ctx:       ctx,
+		cancel:    cancel,
+		inflight:  make(map[string]bool),
+		retries:   make(map[string]int),
+		loops:     make(map[string]int),
+		sem:       make(chan struct{}, maxConcurrent),
 	}
 }
 
@@ -399,6 +407,7 @@ func (d *Dispatcher) transitionTo(taskID, newState, comment string) {
 		return tasks
 	})
 	log.Printf("[dispatcher] %s -> state=%s", taskID, newState)
+	d.broadcast("task.updated", map[string]string{"taskId": taskID, "state": newState})
 }
 
 func isValidTransition(from, to string) bool {

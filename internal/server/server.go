@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/gorilla/websocket"
 	"github.com/hunknownz/temujin/internal/raid"
 	"github.com/hunknownz/temujin/internal/store"
 )
@@ -38,6 +39,11 @@ func New(s *store.FileStore) *Server {
 	return srv
 }
 
+// BroadcastEvent exposes broadcast to external callers (e.g. dispatcher).
+func (s *Server) BroadcastEvent(event string, data any) {
+	s.broadcast(event, data)
+}
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// CORS
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -64,6 +70,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/raid-action", s.handleRaidAction)
 	s.mux.HandleFunc("GET /api/raid-detail", s.handleRaidDetail)
 	s.mux.HandleFunc("GET /api/healthz", s.handleHealth)
+
+	// WebSocket
+	s.mux.HandleFunc("GET /api/ws", s.handleWS)
 
 	// SPA fallback
 	s.mux.HandleFunc("/", s.handleSPA)
@@ -220,6 +229,7 @@ func (s *Server) handleRaidState(w http.ResponseWriter, r *http.Request) {
 		sendJSON(w, 500, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
+	s.broadcast("task.updated", map[string]string{"taskId": req.TaskID, "state": req.NewState})
 	sendJSON(w, 200, map[string]any{"ok": true})
 }
 
@@ -440,11 +450,65 @@ func (s *Server) handleSPA(w http.ResponseWriter, r *http.Request) {
 	http.FileServer(http.FS(sub)).ServeHTTP(w, r)
 }
 
-// --- WebSocket broadcast stub ---
+// --- WebSocket ---
+
+var wsUpgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
+	conn, err := wsUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("[ws] upgrade error: %v", err)
+		return
+	}
+	client := &wsClient{send: make(chan []byte, 64)}
+	s.wsMu.Lock()
+	s.wsClients[client] = true
+	s.wsMu.Unlock()
+	log.Printf("[ws] client connected (%d total)", len(s.wsClients))
+
+	// Writer goroutine
+	go func() {
+		defer conn.Close()
+		for msg := range client.send {
+			if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+				break
+			}
+		}
+	}()
+
+	// Reader goroutine (just drain pings/close)
+	go func() {
+		defer func() {
+			s.wsMu.Lock()
+			delete(s.wsClients, client)
+			s.wsMu.Unlock()
+			close(client.send)
+			log.Printf("[ws] client disconnected (%d total)", len(s.wsClients))
+		}()
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				break
+			}
+		}
+	}()
+}
 
 func (s *Server) broadcast(event string, data any) {
-	// TODO: implement WebSocket broadcast
-	log.Printf("[ws] %s: %v", event, data)
+	msg, err := json.Marshal(map[string]any{"event": event, "data": data})
+	if err != nil {
+		return
+	}
+	s.wsMu.Lock()
+	defer s.wsMu.Unlock()
+	for client := range s.wsClients {
+		select {
+		case client.send <- msg:
+		default:
+			// Client too slow, drop message
+		}
+	}
 }
 
 // --- Helpers ---

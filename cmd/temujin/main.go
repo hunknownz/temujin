@@ -35,11 +35,11 @@ func main() {
 		if len(os.Args) > 2 {
 			port = os.Args[2]
 		}
-		// Start the dispatcher in background
-		disp := dispatch.New(s)
-		go disp.Start()
-
 		srv := server.New(s)
+
+		// Start the dispatcher in background (with WS broadcast)
+		disp := dispatch.New(s, srv.BroadcastEvent)
+		go disp.Start()
 		addr := "127.0.0.1:" + port
 		httpSrv := &http.Server{Addr: addr, Handler: srv}
 

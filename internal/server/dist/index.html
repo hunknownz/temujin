@@ -260,7 +260,29 @@ function timeAgo(iso){
 }
 
 refresh();
-setInterval(refresh,3000);
+// WebSocket for real-time updates (fallback to polling)
+let ws=null,pollTimer=null;
+function connectWS(){
+  const proto=location.protocol==='https:'?'wss:':'ws:';
+  ws=new WebSocket(proto+'//'+location.host+'/api/ws');
+  ws.onopen=()=>{
+    document.getElementById('sync-chip').className='chip ok';
+    document.getElementById('sync-chip').textContent='Live (WS)';
+    if(pollTimer){clearInterval(pollTimer);pollTimer=null}
+  };
+  ws.onmessage=(e)=>{
+    try{JSON.parse(e.data)}catch(e){return}
+    refresh();
+  };
+  ws.onclose=()=>{
+    document.getElementById('sync-chip').textContent='Reconnecting...';
+    if(!pollTimer)pollTimer=setInterval(refresh,3000);
+    setTimeout(connectWS,2000);
+  };
+  ws.onerror=()=>ws.close();
+}
+pollTimer=setInterval(refresh,3000);
+connectWS();
 </script>
 </body>
 </html>
