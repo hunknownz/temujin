@@ -1,5 +1,5 @@
 # Binaries
-temujin
+/temujin
 *.exe
 /dist/
 
