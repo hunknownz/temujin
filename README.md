@@ -163,7 +163,11 @@ temujin/
 - [x] Embedded kanban dashboard with agent output viewer
 - [x] State validation (enforces ValidTransitions)
 - [x] Retry logic with max attempts
-- [ ] WebSocket real-time updates (replace 3s polling)
+- [x] WebSocket real-time updates (with polling fallback)
+- [x] `/api/raid-detail` endpoint (separates heavy data from live-status)
+- [x] Concurrent dispatch semaphore (max 2 parallel agents)
+- [x] Graceful shutdown (SIGINT/SIGTERM with 30s drain)
+- [x] OODA loopback (Yam → Intel re-scouting, max 2 loops)
 - [ ] React frontend upgrade
 - [ ] Tactical templates (Flash Recon, 72h MVP Raid)
 - [ ] Intel radar (automated opportunity scanning)
