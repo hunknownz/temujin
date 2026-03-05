@@ -62,6 +62,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/raid-retreat", s.handleRaidRetreat)
 	s.mux.HandleFunc("POST /api/raid-progress", s.handleRaidProgress)
 	s.mux.HandleFunc("POST /api/raid-action", s.handleRaidAction)
+	s.mux.HandleFunc("GET /api/raid-detail", s.handleRaidDetail)
 	s.mux.HandleFunc("GET /api/healthz", s.handleHealth)
 
 	// SPA fallback
@@ -76,8 +77,31 @@ func (s *Server) handleLiveStatus(w http.ResponseWriter, r *http.Request) {
 		sendJSON(w, 500, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
+	// Return lightweight task summaries (omit heavy agent output text)
+	type agentSummary struct {
+		Agent      string `json:"agent"`
+		At         string `json:"at"`
+		DurationMs int    `json:"durationMs"`
+		Chars      int    `json:"chars"`
+	}
+	type taskSummary struct {
+		raid.Task
+		AgentOutputs []agentSummary `json:"agent_outputs,omitempty"`
+	}
+	summaries := make([]taskSummary, len(tasks))
+	for i, t := range tasks {
+		ts := taskSummary{Task: t}
+		ts.Task.AgentOutputs = nil // clear from embedded
+		ts.Task.Output = ""       // omit last raw output
+		for _, ao := range t.AgentOutputs {
+			ts.AgentOutputs = append(ts.AgentOutputs, agentSummary{
+				Agent: ao.Agent, At: ao.At, DurationMs: ao.DurationMs, Chars: len(ao.Text),
+			})
+		}
+		summaries[i] = ts
+	}
 	sendJSON(w, 200, map[string]any{
-		"tasks":      tasks,
+		"tasks":      summaries,
 		"syncStatus": map[string]any{"ok": true},
 	})
 }
@@ -368,6 +392,26 @@ func (s *Server) handleRaidAction(w http.ResponseWriter, r *http.Request) {
 		return tasks
 	})
 	sendJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (s *Server) handleRaidDetail(w http.ResponseWriter, r *http.Request) {
+	taskID := r.URL.Query().Get("id")
+	if taskID == "" {
+		sendJSON(w, 400, map[string]any{"ok": false, "error": "missing ?id= param"})
+		return
+	}
+	tasks, err := s.store.Load()
+	if err != nil {
+		sendJSON(w, 500, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	for _, t := range tasks {
+		if t.ID == taskID {
+			sendJSON(w, 200, map[string]any{"ok": true, "task": t})
+			return
+		}
+	}
+	sendJSON(w, 404, map[string]any{"ok": false, "error": "task not found"})
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

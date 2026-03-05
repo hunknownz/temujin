@@ -154,24 +154,38 @@ function renderBoard(){
   board.innerHTML=html;
 }
 
-function showTask(id){
+async function showTask(id){
   const t=tasks.find(x=>x.id===id);
   if(!t)return;
 
+  // Show loading state immediately
+  document.getElementById('modal').innerHTML=`
+    <div class="modal-overlay" data-task-id="${id}" onclick="if(event.target===this)closeModal()">
+      <div class="modal">
+        <button class="close" onclick="closeModal()">&times;</button>
+        <h2>${esc(t.title)}</h2>
+        <p style="color:var(--muted);font-size:13px"><span class="spinner"></span> Loading details...</p>
+      </div>
+    </div>`;
+
+  // Fetch full detail (with agent output text)
+  let detail=t;
+  try{const d=await fetchJ('/api/raid-detail?id='+encodeURIComponent(id));if(d.ok)detail=d.task;}catch(e){}
+
   // Flow log
-  const flows=(t.flow_log||[]).map(f=>
+  const flows=(detail.flow_log||[]).map(f=>
     `<div class="flow-item"><span class="flow-time">${fmtTime(f.at)}</span><b>${esc(f.from)}</b><span class="flow-arrow">&rarr;</span><b>${esc(f.to)}</b><span class="flow-remark">${esc(f.remark).substring(0,120)}</span></div>`
   ).join('');
 
-  // Agent outputs
-  const outputs=t.agent_outputs||[];
+  // Agent outputs (full text from detail endpoint)
+  const outputs=detail.agent_outputs||[];
   let outputHtml='';
   if(outputs.length){
     const tabsHtml=outputs.map((o,i)=>
-      `<div class="tab${i===0?' active':''}" onclick="switchTab(this,${i})">${AGENT_LABELS[o.agent]||o.agent} <span style="color:var(--muted)">${(o.durationMs/1000).toFixed(1)}s</span></div>`
+      `<div class="tab${i===0?' active':''}" onclick="switchTab(this,${i})">${AGENT_LABELS[o.agent]||o.agent} <span style="color:var(--muted)">${(o.durationMs/1000).toFixed(1)}s · ${(o.text||'').length}ch</span></div>`
     ).join('');
     const panelsHtml=outputs.map((o,i)=>
-      `<div class="agent-output" data-tab="${i}" style="${i>0?'display:none':''}">${renderMd(o.text)}</div>`
+      `<div class="agent-output" data-tab="${i}" style="${i>0?'display:none':''}">${renderMd(o.text||'')}</div>`
     ).join('');
     outputHtml=`<div class="modal-section"><h3>Agent Reports (${outputs.length})</h3><div class="tabs">${tabsHtml}</div>${panelsHtml}</div>`;
   }
@@ -194,7 +208,7 @@ function showTask(id){
         ${t.block?`<p style="color:var(--danger);font-size:13px;margin-top:4px">Blocked: ${esc(t.block)}</p>`:''}
         ${actionsHtml}
         ${outputHtml}
-        <div class="modal-section"><h3>Flow Log (${(t.flow_log||[]).length})</h3>${flows||'<div class="empty">No records</div>'}</div>
+        <div class="modal-section"><h3>Flow Log (${(detail.flow_log||[]).length})</h3>${flows||'<div class="empty">No records</div>'}</div>
       </div>
     </div>`;
 }
