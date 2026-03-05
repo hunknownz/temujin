@@ -41,7 +41,6 @@ var StateOrgMap = map[string]string{
 	StateBlocked:  "Blocked",
 }
 
-// StateAgentMap maps state to the agent that handles it
 // StateAgentMap maps dispatchable states to agents.
 // March is not here — it auto-transitions to Charge in the dispatcher.
 var StateAgentMap = map[string]string{

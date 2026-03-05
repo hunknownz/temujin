@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -13,15 +14,25 @@ import (
 	"github.com/hunknownz/temujin/internal/store"
 )
 
-const maxRetries = 3
+const (
+	maxRetries    = 3
+	maxConcurrent = 2 // Max parallel OpenClaw agent calls
+	maxLoops      = 2 // Max OODA loopbacks before forcing Done
+)
 
 // Dispatcher polls tasks and auto-dispatches OpenClaw agents through the OODA loop.
 type Dispatcher struct {
-	store    *store.FileStore
-	running  bool
+	store  *store.FileStore
+	cancel context.CancelFunc
+	ctx    context.Context
+	wg     sync.WaitGroup
+
 	mu       sync.Mutex
 	inflight map[string]bool
 	retries  map[string]int // taskID+state -> retry count
+	loops    map[string]int // taskID -> loopback count
+
+	sem chan struct{} // concurrency semaphore
 }
 
 type agentResult struct {
@@ -43,25 +54,49 @@ type agentResult struct {
 }
 
 func New(s *store.FileStore) *Dispatcher {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Dispatcher{
 		store:    s,
+		ctx:      ctx,
+		cancel:   cancel,
 		inflight: make(map[string]bool),
 		retries:  make(map[string]int),
+		loops:    make(map[string]int),
+		sem:      make(chan struct{}, maxConcurrent),
 	}
 }
 
 func (d *Dispatcher) Start() {
-	d.running = true
-	log.Println("[dispatcher] Started — watching for actionable raids")
-	for d.running {
-		d.tick()
-		time.Sleep(3 * time.Second)
+	log.Printf("[dispatcher] Started (max %d concurrent agents, %d retries, %d loops)", maxConcurrent, maxRetries, maxLoops)
+	for {
+		select {
+		case <-d.ctx.Done():
+			log.Println("[dispatcher] Shutting down — waiting for in-flight agents...")
+			d.wg.Wait()
+			log.Println("[dispatcher] Stopped")
+			return
+		default:
+			d.tick()
+			time.Sleep(3 * time.Second)
+		}
 	}
-	log.Println("[dispatcher] Stopped")
 }
 
+// Stop gracefully shuts down the dispatcher.
+// Waits up to 30s for in-flight agents to finish.
 func (d *Dispatcher) Stop() {
-	d.running = false
+	d.cancel()
+	done := make(chan struct{})
+	go func() {
+		d.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		log.Println("[dispatcher] All agents finished cleanly")
+	case <-time.After(30 * time.Second):
+		log.Println("[dispatcher] Shutdown timeout — some agents may still be running")
+	}
 }
 
 func (d *Dispatcher) tick() {
@@ -72,7 +107,7 @@ func (d *Dispatcher) tick() {
 	}
 
 	for _, t := range tasks {
-		if t.Archived || t.State == raid.StateDone || t.State == raid.StateMigrate {
+		if t.Archived || t.State == raid.StateDone || t.State == raid.StateMigrate || t.State == raid.StateBlocked {
 			continue
 		}
 
@@ -93,31 +128,40 @@ func (d *Dispatcher) tick() {
 		d.mu.Lock()
 		if d.retries[retryKey] >= maxRetries {
 			d.mu.Unlock()
-			log.Printf("[dispatcher] %s: max retries (%d) reached for state %s — blocking", t.ID, maxRetries, t.State)
+			log.Printf("[dispatcher] %s: max retries (%d) in state %s — blocking", t.ID, maxRetries, t.State)
 			d.transitionTo(t.ID, raid.StateBlocked, fmt.Sprintf("Agent failed after %d retries", maxRetries))
-			d.addFlowEntry(t.ID, agent, "Blocked", fmt.Sprintf("Max retries reached in %s", t.State))
+			d.addFlowEntry(t.ID, agent, "Blocked", fmt.Sprintf("Max retries in %s", t.State))
 			continue
 		}
 		d.inflight[t.ID] = true
 		d.mu.Unlock()
 
+		d.wg.Add(1)
 		go d.dispatch(t, agent)
 	}
 }
 
 func (d *Dispatcher) dispatch(t raid.Task, agent string) {
+	defer d.wg.Done()
 	defer func() {
 		d.mu.Lock()
 		delete(d.inflight, t.ID)
 		d.mu.Unlock()
 	}()
 
+	// Acquire semaphore (limits concurrent agent calls)
+	select {
+	case d.sem <- struct{}{}:
+		defer func() { <-d.sem }()
+	case <-d.ctx.Done():
+		return
+	}
+
 	msg := buildPrompt(t, agent)
 	log.Printf("[dispatcher] %s -> agent '%s' (state=%s)", t.ID, agent, t.State)
-
 	d.updateProgress(t.ID, fmt.Sprintf("Dispatching to %s...", agent), t.State)
 
-	result, err := callOpenClaw(agent, msg)
+	result, err := callOpenClaw(d.ctx, agent, msg)
 	if err != nil {
 		retryKey := t.ID + ":" + t.State
 		d.mu.Lock()
@@ -147,21 +191,17 @@ func (d *Dispatcher) dispatch(t raid.Task, agent string) {
 	delete(d.retries, retryKey)
 	d.mu.Unlock()
 
-	// Accumulate this agent's output into the task's AgentOutputs
 	d.appendAgentOutput(t.ID, agent, output, dur)
-
 	d.handleAgentOutput(t, agent, output)
 }
 
 func (d *Dispatcher) handleAgentOutput(t raid.Task, agent string, output string) {
 	switch t.State {
 	case raid.StateIntel:
-		// Tanma → Kurultai
 		d.addFlowEntry(t.ID, "Tanma", "Kurultai", "Intel report delivered")
 		d.transitionTo(t.ID, raid.StateKurultai, "Advisor evaluating intel")
 
 	case raid.StateKurultai:
-		// Advisor → GO/NO-GO
 		d.addFlowEntry(t.ID, "Advisor", "Khan", verdictSummary(output))
 		if isRetreatSignal(output) {
 			d.addFlowEntry(t.ID, "Khan", "Migrate", "Retreat per Advisor NO-GO")
@@ -173,7 +213,6 @@ func (d *Dispatcher) handleAgentOutput(t raid.Task, agent string, output string)
 		}
 
 	case raid.StateCharge:
-		// Vanguard → Yam (or retreat)
 		d.addFlowEntry(t.ID, "Vanguard", "Yam", "Execution report delivered")
 		if isRetreatSignal(output) {
 			d.addFlowEntry(t.ID, "Vanguard", "Migrate", "Execution blocked — retreating")
@@ -183,23 +222,54 @@ func (d *Dispatcher) handleAgentOutput(t raid.Task, agent string, output string)
 		}
 
 	case raid.StateYam:
-		// Yam → Loot → Done
 		d.addFlowEntry(t.ID, "Yam", "Khan", "Battle report delivered")
 		d.transitionTo(t.ID, raid.StateLoot, "Khan reviewing battle report")
-		d.addFlowEntry(t.ID, "Khan", "Done", "Loot collected — raid complete")
-		d.transitionTo(t.ID, raid.StateDone, "Raid complete")
+
+		// OODA loopback: if Yam signals SCALE or AT RISK, loop back to Intel
+		if d.shouldLoopBack(t.ID, output) {
+			d.addFlowEntry(t.ID, "Khan", "Intel", "OODA loopback — re-scouting")
+			d.transitionTo(t.ID, raid.StateIntel, "Re-scouting per Yam recommendation")
+			log.Printf("[dispatcher] %s: OODA loopback -> Intel", t.ID)
+		} else {
+			d.addFlowEntry(t.ID, "Khan", "Done", "Loot collected — raid complete")
+			d.transitionTo(t.ID, raid.StateDone, "Raid complete")
+		}
 	}
 }
 
-// buildPrompt assembles the full context for an agent call.
-// Key design: each agent sees ALL previous agents' outputs, not just the last one.
+// shouldLoopBack checks if Yam's report signals need for re-scouting.
+func (d *Dispatcher) shouldLoopBack(taskID, output string) bool {
+	d.mu.Lock()
+	loopCount := d.loops[taskID]
+	d.mu.Unlock()
+
+	if loopCount >= maxLoops {
+		log.Printf("[dispatcher] %s: max loops (%d) reached — completing", taskID, maxLoops)
+		return false
+	}
+
+	lower := strings.ToLower(output)
+	shouldLoop := strings.Contains(lower, "scale") ||
+		strings.Contains(lower, "at risk") ||
+		strings.Contains(lower, "需要扩展") ||
+		strings.Contains(lower, "建议扩展") ||
+		strings.Contains(lower, "风险较高")
+
+	if shouldLoop {
+		d.mu.Lock()
+		d.loops[taskID]++
+		d.mu.Unlock()
+	}
+	return shouldLoop
+}
+
 func buildPrompt(t raid.Task, agent string) string {
 	var sb strings.Builder
 
 	sb.WriteString(fmt.Sprintf("# Raid: %s\n", t.Title))
 	sb.WriteString(fmt.Sprintf("**ID:** %s\n\n", t.ID))
 
-	// Include accumulated outputs from all previous agents (truncated to avoid token overflow)
+	// Include accumulated outputs from all previous agents (truncated)
 	if len(t.AgentOutputs) > 0 {
 		sb.WriteString("---\n\n")
 		for _, ao := range t.AgentOutputs {
@@ -212,7 +282,6 @@ func buildPrompt(t raid.Task, agent string) string {
 		}
 	}
 
-	// Agent-specific mission
 	sb.WriteString("## Your Mission\n\n")
 	switch agent {
 	case raid.AgentTanma:
@@ -239,7 +308,6 @@ func buildPrompt(t raid.Task, agent string) string {
 			"Keep it under 300 words.\n")
 	}
 
-	// Language hint
 	if containsChinese(t.Title) {
 		sb.WriteString("\nReply in Chinese (中文回复).\n")
 	}
@@ -247,10 +315,13 @@ func buildPrompt(t raid.Task, agent string) string {
 	return sb.String()
 }
 
-func callOpenClaw(agent string, message string) (*agentResult, error) {
-	cmd := exec.Command("openclaw", "agent", "--agent", agent, "-m", message, "--json", "--timeout", "300")
+func callOpenClaw(ctx context.Context, agent string, message string) (*agentResult, error) {
+	cmd := exec.CommandContext(ctx, "openclaw", "agent", "--agent", agent, "-m", message, "--json", "--timeout", "300")
 	out, err := cmd.Output()
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("cancelled: %v", ctx.Err())
+		}
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return nil, fmt.Errorf("exit %d: %s", exitErr.ExitCode(), string(exitErr.Stderr))
 		}
@@ -269,20 +340,14 @@ func callOpenClaw(agent string, message string) (*agentResult, error) {
 	return &result, nil
 }
 
-// isRetreatSignal detects explicit NO-GO/RETREAT verdicts.
 func isRetreatSignal(output string) bool {
 	lower := strings.ToLower(output)
 	patterns := []string{
-		"decision: no-go",
-		"verdict: no-go",
-		"决策: no-go",
-		"裁决: no-go",
-		"status: retreat",
-		"verdict: retreat",
-		"建议撤退",
-		"建议: 撤退",
-		"判定: 不可行",
-		"结论: 不可行",
+		"decision: no-go", "verdict: no-go",
+		"决策: no-go", "裁决: no-go",
+		"status: retreat", "verdict: retreat",
+		"建议撤退", "建议: 撤退",
+		"判定: 不可行", "结论: 不可行",
 	}
 	for _, p := range patterns {
 		if strings.Contains(lower, p) {
@@ -292,7 +357,6 @@ func isRetreatSignal(output string) bool {
 	return false
 }
 
-// verdictSummary extracts a short verdict line from advisor output.
 func verdictSummary(output string) string {
 	for _, line := range strings.Split(output, "\n") {
 		lower := strings.ToLower(line)
@@ -319,7 +383,6 @@ func (d *Dispatcher) transitionTo(taskID, newState, comment string) {
 	d.store.Update(func(tasks []raid.Task) []raid.Task {
 		for i := range tasks {
 			if tasks[i].ID == taskID {
-				// Validate transition
 				if !isValidTransition(tasks[i].State, newState) {
 					log.Printf("[dispatcher] INVALID transition %s: %s -> %s", taskID, tasks[i].State, newState)
 					return tasks
@@ -376,7 +439,6 @@ func (d *Dispatcher) appendAgentOutput(taskID, agent, text string, durationMs in
 					At:         raid.NowISO(),
 					DurationMs: durationMs,
 				})
-				// Also keep Output field updated with latest for backward compat
 				tasks[i].Output = text
 				tasks[i].UpdatedAt = raid.NowISO()
 				break

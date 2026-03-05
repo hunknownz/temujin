@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/hunknownz/temujin/internal/dispatch"
 	"github.com/hunknownz/temujin/internal/raid"
@@ -34,12 +38,28 @@ func main() {
 		// Start the dispatcher in background
 		disp := dispatch.New(s)
 		go disp.Start()
-		defer disp.Stop()
 
 		srv := server.New(s)
 		addr := "127.0.0.1:" + port
+		httpSrv := &http.Server{Addr: addr, Handler: srv}
+
+		// Graceful shutdown on SIGINT/SIGTERM
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		go func() {
+			sig := <-sigCh
+			log.Printf("Received %s — shutting down...", sig)
+			disp.Stop()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			httpSrv.Shutdown(ctx)
+		}()
+
 		log.Printf("Temujin v%s starting on http://%s (dispatcher active)", version, addr)
-		log.Fatal(http.ListenAndServe(addr, srv))
+		if err := httpSrv.ListenAndServe(); err != http.ErrServerClosed {
+			log.Fatal(err)
+		}
+		log.Println("Temujin stopped.")
 
 	case "raid":
 		if len(os.Args) < 3 {
