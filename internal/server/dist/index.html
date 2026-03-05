@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Temujin - Khan's War Room</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0a0e17;--panel:#111827;--panel2:#1a2332;--text:#e5e7eb;--muted:#6b7280;--acc:#f59e0b;--ok:#10b981;--danger:#ef4444;--warn:#f59e0b;--line:#1f2937;--scout:#3b82f6;--charge:#ef4444;--yam:#10b981;--migrate:#8b5cf6}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+.wrap{max-width:1400px;margin:0 auto;padding:12px 16px}
+.hdr{display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.logo{font-size:20px;font-weight:700;color:var(--acc)}
+.logo span{color:var(--muted);font-weight:400;font-size:14px;margin-left:8px}
+.hdr-r{display:flex;align-items:center;gap:8px}
+.chip{background:var(--panel2);padding:4px 10px;border-radius:12px;font-size:12px}
+.chip.ok{color:var(--ok)}.chip.err{color:var(--danger)}
+.btn{background:var(--acc);color:#000;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600}
+.btn:hover{opacity:0.85}
+.btn-sm{padding:4px 10px;font-size:12px}
+.btn-ghost{background:transparent;color:var(--text);border:1px solid var(--line)}
+.board{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-top:16px}
+.col{background:var(--panel);border-radius:8px;padding:10px;min-height:200px}
+.col-hdr{font-size:13px;font-weight:600;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
+.col-hdr .cnt{background:var(--panel2);padding:2px 8px;border-radius:10px;font-size:11px;color:var(--muted)}
+.card{background:var(--panel2);border-radius:6px;padding:10px;margin-bottom:8px;cursor:pointer;border-left:3px solid var(--muted);transition:border-color .2s}
+.card:hover{border-color:var(--acc)}
+.card-title{font-size:13px;font-weight:500;margin-bottom:4px}
+.card-meta{font-size:11px;color:var(--muted)}
+.card-now{font-size:11px;color:var(--acc);margin-top:4px}
+.new-raid{margin:16px 0;display:flex;gap:8px}
+.new-raid input{flex:1;background:var(--panel);border:1px solid var(--line);color:var(--text);padding:8px 12px;border-radius:6px;font-size:14px}
+.new-raid input:focus{outline:none;border-color:var(--acc)}
+.empty{color:var(--muted);font-size:12px;text-align:center;padding:20px 0}
+.modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:100}
+.modal{background:var(--panel);border-radius:12px;padding:20px;width:90%;max-width:600px;max-height:80vh;overflow-y:auto}
+.modal h2{font-size:16px;margin-bottom:12px;color:var(--acc)}
+.modal .close{float:right;background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer}
+.flow-item{display:flex;gap:8px;font-size:12px;padding:6px 0;border-bottom:1px solid var(--line)}
+.flow-time{color:var(--muted);min-width:60px}
+.flow-arrow{color:var(--acc)}
+.pipe{display:flex;gap:2px;margin:8px 0}
+.pipe-dot{width:20px;height:4px;border-radius:2px;background:var(--line)}
+.pipe-dot.done{background:var(--ok)}
+.pipe-dot.active{background:var(--acc);animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}
+footer{text-align:center;color:var(--muted);font-size:11px;padding:20px 0;border-top:1px solid var(--line);margin-top:24px}
+</style>
+</head>
+<body>
+<div class="wrap" id="app">
+  <div class="hdr">
+    <div>
+      <div class="logo">Temujin <span>Khan's War Room</span></div>
+    </div>
+    <div class="hdr-r">
+      <span class="chip" id="sync-chip">Connecting...</span>
+      <span class="chip" id="count-chip">0 raids</span>
+      <button class="btn btn-sm" onclick="refresh()">Refresh</button>
+    </div>
+  </div>
+
+  <div class="new-raid">
+    <input id="new-title" placeholder="Describe your raid mission..." onkeydown="if(event.key==='Enter')createRaid()">
+    <button class="btn" onclick="createRaid()">Launch Raid</button>
+  </div>
+
+  <div class="board" id="board"></div>
+
+  <div id="modal"></div>
+
+  <footer>Temujin v0.1.0 &mdash; The steppe conquers the court.</footer>
+</div>
+
+<script>
+const API = '';
+const PIPE = [
+  {key:'Inbox',label:'Command',icon:'crown',color:'#ffd700'},
+  {key:'Intel',label:'Scout',icon:'eye',color:'#3b82f6'},
+  {key:'Kurultai',label:'Evaluate',icon:'shield',color:'#8b5cf6'},
+  {key:'March',label:'Prepare',icon:'horse',color:'#f59e0b'},
+  {key:'Charge',label:'Strike',icon:'swords',color:'#ef4444'},
+  {key:'Yam',label:'Report',icon:'scroll',color:'#10b981'},
+  {key:'Loot',label:'Collect',icon:'gem',color:'#f59e0b'},
+  {key:'Done',label:'Complete',icon:'check',color:'#10b981'},
+];
+const STATE_IDX = {};
+PIPE.forEach((s,i) => STATE_IDX[s.key]=i);
+STATE_IDX['Blocked']=4; STATE_IDX['Migrate']=7;
+
+let tasks = [];
+let pollTimer = null;
+
+async function fetchJ(url) {
+  const r = await fetch(API+url, {cache:'no-store'});
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+}
+async function postJ(url, data) {
+  const r = await fetch(API+url, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+  return r.json();
+}
+
+async function refresh() {
+  try {
+    const d = await fetchJ('/api/live-status');
+    tasks = d.tasks || [];
+    document.getElementById('sync-chip').className = 'chip ok';
+    document.getElementById('sync-chip').textContent = 'Connected';
+    const active = tasks.filter(t => !t.archived && t.state!=='Done' && t.state!=='Migrate');
+    document.getElementById('count-chip').textContent = active.length + ' active raids';
+    renderBoard();
+  } catch(e) {
+    document.getElementById('sync-chip').className = 'chip err';
+    document.getElementById('sync-chip').textContent = 'Offline';
+  }
+}
+
+function renderBoard() {
+  const board = document.getElementById('board');
+  const activeTasks = tasks.filter(t => !t.archived);
+  let html = '';
+  for (const stage of PIPE) {
+    const col = activeTasks.filter(t => t.state === stage.key || (stage.key==='Done' && t.state==='Migrate'));
+    html += `<div class="col">
+      <div class="col-hdr"><span style="color:${stage.color}">${stage.label}</span><span class="cnt">${col.length}</span></div>`;
+    if (col.length === 0) {
+      html += '<div class="empty">No raids</div>';
+    }
+    for (const t of col) {
+      const pipeHtml = PIPE.map((s,i) => {
+        const idx = STATE_IDX[t.state] ?? 4;
+        const cls = i < idx ? 'done' : i === idx ? 'active' : '';
+        return `<div class="pipe-dot ${cls}"></div>`;
+      }).join('');
+      html += `<div class="card" style="border-color:${stage.color}" onclick="showTask('${t.id}')">
+        <div class="card-title">${esc(t.title)}</div>
+        <div class="pipe">${pipeHtml}</div>
+        <div class="card-now">${esc(t.now||'')}</div>
+        <div class="card-meta">${t.id} &middot; ${timeAgo(t.updatedAt)}</div>
+      </div>`;
+    }
+    html += '</div>';
+  }
+  board.innerHTML = html;
+}
+
+function showTask(id) {
+  const t = tasks.find(x => x.id === id);
+  if (!t) return;
+  const flows = (t.flow_log||[]).map(f =>
+    `<div class="flow-item"><span class="flow-time">${timeAgo(f.at)}</span><span>${esc(f.from)}</span><span class="flow-arrow">&rarr;</span><span>${esc(f.to)}</span><span style="color:var(--muted)">${esc(f.remark)}</span></div>`
+  ).join('');
+  document.getElementById('modal').innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal">
+        <button class="close" onclick="closeModal()">&times;</button>
+        <h2>${esc(t.title)}</h2>
+        <p style="color:var(--muted);font-size:13px">${t.id} &middot; ${t.state} &middot; ${t.org}</p>
+        <p style="margin:8px 0;font-size:13px;color:var(--acc)">${esc(t.now||'')}</p>
+        ${t.block ? `<p style="color:var(--danger);font-size:13px">Blocked: ${esc(t.block)}</p>` : ''}
+        <div style="margin:12px 0">
+          ${t.state!=='Done'&&t.state!=='Migrate' ? `
+            <button class="btn btn-sm" onclick="doAction('${t.id}','stop','Paused by Khan')">Stop</button>
+            <button class="btn btn-sm btn-ghost" onclick="doAction('${t.id}','cancel','Cancelled by Khan')">Cancel</button>
+          ` : ''}
+          ${t.state==='Blocked' ? `<button class="btn btn-sm" onclick="doAction('${t.id}','resume','')">Resume</button>` : ''}
+          ${t.state==='Done'||t.state==='Migrate' ? `<button class="btn btn-sm btn-ghost" onclick="doAction('${t.id}','archive','')">Archive</button>` : ''}
+        </div>
+        <h3 style="font-size:13px;margin:12px 0 6px;color:var(--muted)">Flow Log</h3>
+        ${flows || '<div class="empty">No flow records</div>'}
+      </div>
+    </div>`;
+}
+
+function closeModal() { document.getElementById('modal').innerHTML = ''; }
+
+async function createRaid() {
+  const input = document.getElementById('new-title');
+  const title = input.value.trim();
+  if (!title || title.length < 6) { alert('Title must be at least 6 characters'); return; }
+  await postJ('/api/create-raid', {title});
+  input.value = '';
+  refresh();
+}
+
+async function doAction(id, action, reason) {
+  await postJ('/api/raid-action', {taskId:id, action, reason});
+  closeModal();
+  refresh();
+}
+
+function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function timeAgo(iso) {
+  if (!iso) return '';
+  const d = new Date(iso); const diff = Date.now() - d.getTime();
+  const m = Math.floor(diff/60000);
+  if (m<1) return 'just now'; if (m<60) return m+'m ago';
+  const h = Math.floor(m/60); if (h<24) return h+'h ago';
+  return Math.floor(h/24)+'d ago';
+}
+
+// Poll every 5s
+refresh();
+pollTimer = setInterval(refresh, 5000);
+</script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+# Binaries
+temujin
+*.exe
+/dist/
+
+# Data
+data/
+
+# Go
+vendor/
+
+# OS
+.DS_Store
+*.swp
+
+# IDE
+.idea/
+.vscode/
+*.code-workspace
+
+# Node (for future React frontend)
+node_modules/
+web/dist/
