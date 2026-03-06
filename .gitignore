@@ -1,7 +1,6 @@
 # Binaries
 /temujin
 *.exe
-/dist/
 
 # Data
 data/
@@ -18,6 +17,10 @@ vendor/
 .vscode/
 *.code-workspace
 
-# Node (for future React frontend)
+# Node
 node_modules/
-web/dist/
+dashboard/dist/
+
+# React build output is copied to internal/server/dist/ by make build
+# We track a placeholder index.html so bare `go build` still compiles
+internal/server/dist/assets/
